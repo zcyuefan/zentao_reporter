@@ -39,3 +39,7 @@ pip install -r requirments.txt
 ### 4.修改zentao_reporter.py中的运行入口 "__main__"，修改自己需要的时间段，运行该文件即可
 
 目前运行方式较为简单，后续可以增加命令行参数
+
+### 5.生成报告截图
+[img](img/report_1.png)
+[img](img/report_2.png)
