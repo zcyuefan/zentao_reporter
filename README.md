@@ -41,6 +41,6 @@ pip install -r requirments.txt
 目前运行方式较为简单，后续可以增加命令行参数
 
 ### 5.生成报告截图
-![img](img/report_1.png)
+![img](https://github.com/zcyuefan/zentao_reporter/blob/master/img/report_1.png)
 
-![img](img/report_2.png)
+![img](https://github.com/zcyuefan/zentao_reporter/blob/master/img/report_2.png)
