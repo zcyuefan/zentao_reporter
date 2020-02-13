@@ -11,6 +11,7 @@ import os
 import MySQLdb
 from config import default_config
 from jinja2 import Template
+from datetime import datetime, timedelta
 
 
 class Reporter:
@@ -73,7 +74,8 @@ class Reporter:
             },
             'task': {
                 'do': self._query_user_do_task(user, from_date, to_date),
-                'current': self._query_user_current_task(user)
+                'current': self._query_user_current_task(user),
+                'short_period': self._query_user_short_period_task(user, to_date)
             }
         }
 
@@ -225,10 +227,34 @@ class Reporter:
         stat['total'] = sum([i[1] for i in detail])
         return stat
 
+    def _query_user_short_period_task(self, user, to_date):
+        """
+        查询用户未来短期task情况
+        :param user: 禅道account
+        :return: {
+        'detail': 查询出的列表，包括deadline，taskid，taskname, taskstatus, estimate, consumed, left
+        'summary': {'estimate':预计消耗总工时, 'consumed':已经消耗总工时, 'left':剩余总工时 },
+        }
+        """
+        stat = {}
+        deadline = datetime.strptime(to_date, '%Y-%m-%d') + timedelta(days=self.config.SHORT_PERIOD_DAY)
+        deadline_str = deadline.strftime('%Y-%m-%d')
+        query_detail = "select `zt_task`.`deadline` AS `deadline`,`zt_task`.`id` AS `id`,`zt_task`.`name` AS `name`,`zt_task`.`status` AS `status`,`zt_task`.`estimate` AS `estimate`,`zt_task`.`consumed` AS `consumed`,`zt_task`.`left` AS `left` from `zt_task` where ((`zt_task`.`assignedTo` = %s) AND (`zt_task`.`parent` <> -1) AND (`zt_task`.`deadline` <= %s) and (`zt_task`.`status` not in ('closed','cancel')));"
+        detail = self._query(query_detail, (user, deadline_str))
+        stat['detail'] = detail
+        query_summary = "select ROUND(sum(`zt_task`.`estimate`), 2) AS `estimate`,ROUND(sum(`zt_task`.`consumed`),2) AS `consumed`,ROUND(sum(`zt_task`.`left`),2) AS `left` from `zt_task` where ((`zt_task`.`assignedTo` = %s) AND (`zt_task`.`parent` <> -1) AND (`zt_task`.`deadline` <= %s) and (`zt_task`.`status` not in ('closed','cancel'))) GROUP BY assignedTo"
+        summary = self._query(query_summary, (user, deadline_str))
+        stat['summary'] = {
+            'estimate': summary[0][0], 'consumed': summary[0][1], 'left': summary[0][2]
+        }
+        stat['period'] = self.config.SHORT_PERIOD_DAY
+        return stat
+
     def _query(self, query, params):
         cursor = self.conn.cursor()
         cursor.execute(query, params)
         entries = cursor.fetchall()
+        print('执行SQL:%s' %cursor._executed)
         return entries
 
     def gen_summary(self):
@@ -265,7 +291,7 @@ class DailyReporter(Reporter):
 
 
 if __name__ == "__main__":
-    my_reporter = DailyReporter('2020-02-12')
+    my_reporter = DailyReporter('2020-02-13')
     # my_reporter = Reporter('2020-02-12', '2020-02-12')
     my_reporter.gen_summary()
     print(my_reporter.summary)

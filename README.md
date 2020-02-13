@@ -1,6 +1,7 @@
 # zentao_reporter
 
-一款开源吧禅道报告生成工具，便捷生成一段时间内禅道用户bug、任务相关报告。
+一款开源版禅道报告生成工具，便捷生成一段时间内禅道用户bug、任务相关报告。
+结合Crontab实现日报、周报、月报功能，直观的统计每个员工的工作。
 
 ## 已实现功能
 
@@ -12,6 +13,7 @@
 - [x] 当前待处理BUG详细
 - [x] 进行的任务，以及当期消耗工时
 - [x] 当前待处理任务详细
+- [x] 未来3天（可以设置）任务完成情况。
 
 ## TODO
 以下是本工具预计增加的功能，也欢迎大家多提意见和参与开发！
@@ -41,6 +43,4 @@ pip install -r requirments.txt
 目前运行方式较为简单，后续可以增加命令行参数
 
 ### 5.生成报告截图
-![img](https://github.com/zcyuefan/zentao_reporter/blob/master/img/report_1.png)
-
-![img](https://github.com/zcyuefan/zentao_reporter/blob/master/img/report_2.png)
+![img](https://github.com/zcyuefan/zentao_reporter/blob/master/img/screenshot.png)
