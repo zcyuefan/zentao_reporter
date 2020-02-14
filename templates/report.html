@@ -258,7 +258,7 @@
               </table>
             </div>
             <div id="task-short-period-div">
-              <h6>未来{{ user_stat.task.short_period.period }}天任务详情：预计工时{{ user_stat.task.short_period.summary.estimate }}，已消耗{{ user_stat.task.short_period.summary.consumed }}，剩余共{{ user_stat.task.short_period.summary.left }} </h6>
+              <h6>未来{{ user_stat.task.short_period.period }}天任务详情：预计工时{{ user_stat.task.short_period.summary.estimate }}，已消耗{{ user_stat.task.short_period.summary.consumed }}，剩余共{{ user_stat.task.short_period.summary.left }}(红色字体为超期任务) </h6>
               <table class="table table-striped table-sm">
                 <thead>
                 <tr>
@@ -273,7 +273,7 @@
                 </thead>
                 <tbody>
                 {% for i in user_stat.task.short_period.detail %}
-                  <tr>
+                  <tr {% if i[0] and i[0]|string < user_stat.from_date %}style="color:red;"{% endif %}>
                     <td>{{ i[0] }}</td>
                     <td>{{ i[1] }}</td>
                     <td>{{ i[2] }}</td>

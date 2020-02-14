@@ -9,12 +9,14 @@
 """
 import os
 import MySQLdb
+import click
 from config import default_config
 from jinja2 import Template
 from datetime import datetime, timedelta
 
 
 class Reporter:
+    """报告生成类"""
 
     def __init__(self, from_date, to_date, config=default_config):
         self.from_date = from_date
@@ -65,6 +67,8 @@ class Reporter:
         return {
             'account': user,
             'realname': self._get_user_realname(user),
+            'from_date': from_date,
+            'to_date': to_date,
             'bug': {
                 'open': self._query_user_open_bug(user, from_date, to_date),
                 'close': self._query_user_close_bug(user, from_date, to_date),
@@ -242,11 +246,16 @@ class Reporter:
         query_detail = "select `zt_task`.`deadline` AS `deadline`,`zt_task`.`id` AS `id`,`zt_task`.`name` AS `name`,`zt_task`.`status` AS `status`,`zt_task`.`estimate` AS `estimate`,`zt_task`.`consumed` AS `consumed`,`zt_task`.`left` AS `left` from `zt_task` where ((`zt_task`.`assignedTo` = %s) AND (`zt_task`.`parent` <> -1) AND (`zt_task`.`deadline` <= %s) and (`zt_task`.`status` not in ('closed','cancel')));"
         detail = self._query(query_detail, (user, deadline_str))
         stat['detail'] = detail
-        query_summary = "select ROUND(sum(`zt_task`.`estimate`), 2) AS `estimate`,ROUND(sum(`zt_task`.`consumed`),2) AS `consumed`,ROUND(sum(`zt_task`.`left`),2) AS `left` from `zt_task` where ((`zt_task`.`assignedTo` = %s) AND (`zt_task`.`parent` <> -1) AND (`zt_task`.`deadline` <= %s) and (`zt_task`.`status` not in ('closed','cancel'))) GROUP BY assignedTo"
+        query_summary = "select ROUND(sum(`zt_task`.`estimate`), 2) AS `estimate`,ROUND(sum(`zt_task`.`consumed`),2) AS `consumed`,ROUND(sum(`zt_task`.`left`),2) AS `left` from `zt_task` where ((`zt_task`.`assignedTo` = %s) AND (`zt_task`.`parent` <> -1) AND (`zt_task`.`deadline` <= %s) and (`zt_task`.`status` not in ('closed','cancel')))"
         summary = self._query(query_summary, (user, deadline_str))
-        stat['summary'] = {
-            'estimate': summary[0][0], 'consumed': summary[0][1], 'left': summary[0][2]
-        }
+        if len(summary) > 0:
+            stat['summary'] = {
+                'estimate': summary[0][0], 'consumed': summary[0][1], 'left': summary[0][2]
+            }
+        else:
+            stat['summary'] = {
+                'estimate': 0, 'consumed': 0, 'left': 0
+            }
         stat['period'] = self.config.SHORT_PERIOD_DAY
         return stat
 
@@ -285,14 +294,64 @@ class Reporter:
 
 
 class DailyReporter(Reporter):
+    """日报"""
     def __init__(self, date, config=default_config):
         super().__init__(from_date=date, to_date=date, config=config)
         self.report_title = '{}禅道日报'.format(date)
 
 
+class WeeklyReporter(Reporter):
+    """周报"""
+    def __init__(self, to_date, config=default_config):
+        to_datetime = datetime.strptime(to_date, '%Y-%m-%d')
+        monday = to_datetime - timedelta(days=to_datetime.weekday())
+        monday_str = monday.strftime('%Y-%m-%d')
+        super().__init__(from_date=monday_str, to_date=to_date, config=config)
+        self.report_title = '{}至{}禅道周报'.format(monday_str, to_date)
+
+
+class MonthlyReporter(Reporter):
+    """月报"""
+    def __init__(self, to_date, config=default_config):
+        month = to_date[:7]
+        first_day = month + '-01'
+        super().__init__(from_date=first_day, to_date=to_date, config=config)
+        self.report_title = '{}禅道月报'.format(month)
+
+
+@click.command()
+@click.option('--report-type', type=click.Choice(['daily', 'weekly', 'monthly'], case_sensitive=False),
+              help='报告类型, 不选择则生成普通报告')
+@click.option('--from-date', type=click.DateTime(formats=('%Y-%m-%d',)), help='报告开始日期，如 --to-date 2020-02-03')
+@click.option('--to-date', type=click.DateTime(formats=('%Y-%m-%d',)), help='报告结束日期，如 --to-date 2020-02-14')
+@click.option('--today', is_flag=True, help='以今日为报告结束日期，等同 --to-date 今日')
+def build_zentao_report(report_type, from_date, to_date, today):
+    """生成禅道报告"""
+    if today and to_date:
+        raise click.BadParameter('参数 --to-date 和 --today 冲突, 只能给其中一个参数赋值')
+    elif today and not to_date:
+        to_date_str = datetime.now().strftime('%Y-%m-%d')
+    elif not today and to_date:
+        to_date_str = to_date.strftime('%Y-%m-%d')
+    else:
+        raise click.MissingParameter('参数 --to-date 或 --today 必填')
+    if from_date and report_type:
+        raise click.BadParameter('--report-type 和 --from-date 冲突, 选择报告类型后，报告开始日期值将固定')
+    elif from_date and not report_type:
+        from_date_str = from_date.strftime('%Y-%m-%d')
+        reporter = Reporter(from_date_str, to_date_str)
+    elif not from_date and report_type == 'daily':
+        reporter = DailyReporter(to_date_str)
+    elif not from_date and report_type == 'weekly':
+        reporter = WeeklyReporter(to_date_str)
+    elif not from_date and report_type == 'monthly':
+        reporter = MonthlyReporter(to_date_str)
+    else:
+        raise click.MissingParameter('参数 --from-date 或 --report-type 必填')
+    reporter.gen_summary()
+    reporter.gen_html_report()
+
+
 if __name__ == "__main__":
-    my_reporter = DailyReporter('2020-02-13')
-    # my_reporter = Reporter('2020-02-12', '2020-02-12')
-    my_reporter.gen_summary()
-    print(my_reporter.summary)
-    my_reporter.gen_html_report()
+    build_zentao_report()
+
