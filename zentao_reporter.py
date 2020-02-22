@@ -22,7 +22,7 @@ class Reporter:
         self.from_date = from_date
         self.to_date = to_date
         self.config = config
-        self.summary = []
+        self.report = {}
         self.template_file_name = 'report.html'
         self.report_title = '{}至{}禅道报告'.format(self.from_date, self.to_date)
         self.conn = self._connect_db(config.ZENTAO_DB)
@@ -40,6 +40,33 @@ class Reporter:
             return MySQLdb.connect(**db_params)
         else:
             raise TypeError('db_params参数类型错误，当前值为{}{}'.format(db_params, type(db_params)))
+
+    def get_build_stat(self, from_date, to_date):
+        """
+        查询版本信息
+        :param from_date: 起始日期
+        :param to_date: 终止日期
+        :return: [(版本名称，打包日期,完成需求，解决bug)]
+        """
+        print('正在获取版本信息……')
+        stat = []
+        query_detail = "SELECT `name`, date, stories, bugs FROM zt_build WHERE deleted<>0 AND date BETWEEN %s AND %s ORDER BY id desc"
+        detail = self._query(query_detail, (from_date, to_date))
+        for i in detail:
+            if i[3]:
+                query_bugs = 'SELECT GROUP_CONCAT(CONCAT("#",`id`,`title`) separator "<br />") FROM zt_bug WHERE id in (%s);' % \
+                             i[3].strip(',')
+                bugs = self._query(query_bugs)[0][0]
+            else:
+                bugs = ''
+            if i[2]:
+                query_stories = 'SELECT GROUP_CONCAT(CONCAT("#",`id`,`title`) separator "<br />") FROM zt_story WHERE id in (%s);' % \
+                                i[2].strip(',')
+                stories = self._query(query_stories)[0][0]
+            else:
+                stories = ''
+            stat.append([i[0], i[1], stories, bugs])
+        return stat
 
     def get_user_stat(self, user, from_date, to_date):
         """
@@ -79,7 +106,8 @@ class Reporter:
             'task': {
                 'do': self._query_user_do_task(user, from_date, to_date),
                 'current': self._query_user_current_task(user),
-                'short_period': self._query_user_short_period_task(user, to_date)
+                'short_period': self._query_user_short_period_task(user, to_date),
+                'month_done': self._query_user_month_done_task(user, to_date)
             }
         }
 
@@ -167,6 +195,7 @@ class Reporter:
         'detail': [查询出的列表，包括日期，严重程度，bug总数，bug详情],
         'summary': {'致命':1, '严重':3, '一般': 5, '提示': '6'},
         'total': 总数
+        'code_error_percent': 代码错误比例
         }
         """
         stat = {}
@@ -175,7 +204,10 @@ class Reporter:
         query_summary = "SELECT `severity`, SUM(`bugresolve`) FROM `ztv_userdayresolvebug` WHERE `account` = %s AND `day` BETWEEN %s AND %s GROUP BY severity"
         summary = self._query(query_summary, (user, from_date, to_date))
         stat['summary'] = {i[0]: i[1] for i in summary}
-        stat['total'] = sum([i[1] for i in summary])
+        stat['total'] = int(sum([i[1] for i in summary]))
+        query_code_error_count = "SELECT COUNT(0) FROM zt_bug WHERE resolvedBy=%s AND type='codeerror' AND resolvedDate BETWEEN %s AND %s"
+        code_error_count = self._query(query_code_error_count, (user, from_date + ' 00:00:00', to_date + ' 23:59:59'))
+        stat['code_error_percent'] = round(code_error_count[0][0] / stat['total'], 2) if stat['total'] else 0
         return stat
 
     def _query_user_current_bug(self, user):
@@ -190,7 +222,7 @@ class Reporter:
         """
         stat = {}
         query_detail = "SELECT `severity`, `bugassign`, `bugs` FROM `ztv_usercurrentbug` WHERE `account` = %s"
-        detail = self._query(query_detail, (user, ))
+        detail = self._query(query_detail, (user,))
         stat['detail'] = detail
         stat['summary'] = {i[0]: i[1] for i in detail}
         stat['total'] = sum([i[1] for i in detail])
@@ -203,15 +235,32 @@ class Reporter:
         :param from_date: 起始日期
         :param to_date: 终止日期
         :return: {
-        'detail': [查询出的列表，包括日期，taskid，taskname，消耗工时],
+        'detail': [查询出的列表，包括日期，taskid，taskname，预计工时, 消耗工时， 剩余工时],
         'total_consumed': 总消耗工时
         }
         """
         stat = {}
-        query_detail = "SELECT `day`, `taskid`, `taskname`, `consumed` FROM `ztv_userdaydotask` WHERE `account` = %s AND `day` BETWEEN %s AND %s"
+        query_detail = "SELECT `day`, `taskid`, `taskname`, `estimate`,`consumed`,`left` FROM `ztv_userdaydotask` WHERE `account` = %s AND `day` BETWEEN %s AND %s"
         stat['detail'] = self._query(query_detail, (user, from_date, to_date))
-        stat['total_consumed'] = sum([i[3] for i in stat['detail']])
+        stat['total_consumed'] = sum([i[4] for i in stat['detail']])
         return stat
+
+    def _query_user_month_done_task(self, user, to_date):
+        """
+        查询用户当月完成的task
+        :param user: 禅道account
+        :param to_date: 终止日期
+        :return: {
+        'count': 总数，'estimate':预计工时, 'consumed':消耗工时, 'left':剩余工时
+        }
+        """
+        month = to_date[:7]
+        first_day = month + '-01'
+        query_detail = "select count(*), ROUND(sum(`zt_task`.`estimate`), 2) AS `estimate`,ROUND(sum(`zt_task`.`consumed`),2) AS `consumed`,ROUND(sum(`zt_task`.`left`),2) AS `left` from `zt_task` where ((`zt_task`.`deleted`='0') AND (`zt_task`.`finishedBy` = %s) AND (`zt_task`.`parent` <> -1) AND (`zt_task`.`finishedDate` BETWEEN %s AND %s) and (`zt_task`.`status` in ('closed','done')) AND (`zt_task`.`closedReason` <> 'cancel'))"
+        result = self._query(query_detail, (user, first_day + ' 00:00:00', to_date + ' 23:59:59'))
+        return {
+            'count': result[0][0], 'estimate': result[0][1], 'consumed': result[0][2], 'left': result[0][3]
+        }
 
     def _query_user_current_task(self, user):
         """
@@ -225,7 +274,7 @@ class Reporter:
         """
         stat = {}
         query_detail = "SELECT `status`, `taskassign`, `tasks` FROM `ztv_usercurrenttask` WHERE `account` = %s"
-        detail = self._query(query_detail, (user, ))
+        detail = self._query(query_detail, (user,))
         stat['detail'] = detail
         stat['summary'] = {i[0]: i[1] for i in detail}
         stat['total'] = sum([i[1] for i in detail])
@@ -259,18 +308,24 @@ class Reporter:
         stat['period'] = self.config.SHORT_PERIOD_DAY
         return stat
 
-    def _query(self, query, params):
+    def _query(self, query, params=None):
         cursor = self.conn.cursor()
         cursor.execute(query, params)
         entries = cursor.fetchall()
-        print('执行SQL:%s' %cursor._executed)
+        print('执行SQL:%s' % cursor._executed)
         return entries
 
-    def gen_summary(self):
+    def gen_report(self):
         print('正在获取报告……')
-        for user in self.config.ZENTAO_USERS:
-            self.summary.append(self.get_user_stat(user, self.from_date, self.to_date))
-        return self.summary
+        self.report['title'] = self.report_title
+        self.report['build'] = self.get_build_stat(self.from_date, self.to_date)
+        self.report['group_stat'] = {}
+        for group, group_users in self.config.ZENTAO_USERS.items():
+            self.report['group_stat'][group] = []
+            for user in group_users:
+                self.report['group_stat'][group].append(self.get_user_stat(user, self.from_date, self.to_date))
+        print(self.report)
+        return self.report
 
     def gen_html_report(self):
         print('正在生成报告……')
@@ -285,7 +340,7 @@ class Reporter:
                 rendered_content = Template(
                     template_content,
                     # extensions=["jinja2.ext.loopcontrols"]
-                ).render({'title': self.report_title, 'summary': self.summary})
+                ).render(self.report)
                 fp_w.write(rendered_content)
         print('报告生成成功，保存位置：%s' % report_path)
 
@@ -295,6 +350,7 @@ class Reporter:
 
 class DailyReporter(Reporter):
     """日报"""
+
     def __init__(self, date, config=default_config):
         super().__init__(from_date=date, to_date=date, config=config)
         self.report_title = '{}禅道日报'.format(date)
@@ -302,16 +358,20 @@ class DailyReporter(Reporter):
 
 class WeeklyReporter(Reporter):
     """周报"""
+
     def __init__(self, to_date, config=default_config):
         to_datetime = datetime.strptime(to_date, '%Y-%m-%d')
         monday = to_datetime - timedelta(days=to_datetime.weekday())
         monday_str = monday.strftime('%Y-%m-%d')
+        sunday = monday + timedelta(days=6)
+        sunday_str = sunday.strftime('%Y-%m-%d')
         super().__init__(from_date=monday_str, to_date=to_date, config=config)
-        self.report_title = '{}至{}禅道周报'.format(monday_str, to_date)
+        self.report_title = '{}至{}禅道周报'.format(monday_str, sunday_str)
 
 
 class MonthlyReporter(Reporter):
     """月报"""
+
     def __init__(self, to_date, config=default_config):
         month = to_date[:7]
         first_day = month + '-01'
@@ -348,10 +408,9 @@ def build_zentao_report(report_type, from_date, to_date, today):
         reporter = MonthlyReporter(to_date_str)
     else:
         raise click.MissingParameter('参数 --from-date 或 --report-type 必填')
-    reporter.gen_summary()
+    reporter.gen_report()
     reporter.gen_html_report()
 
 
 if __name__ == "__main__":
     build_zentao_report()
-
